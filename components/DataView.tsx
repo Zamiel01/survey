@@ -245,12 +245,7 @@ export default function DataView({ onBack }: FormManagementProps) {
             >
               CSV
             </button>
-            <button
-              onClick={exportPDF}
-              className="flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 bg-primary-black text-pure-white border-2 border-primary-black rounded-sm cursor-pointer text-xs font-semibold transition-all duration-300 uppercase tracking-wide hover:bg-pure-white hover:text-primary-black"
-            >
-              PDF
-            </button>
+        
           </div>
         </div>
 

@@ -358,10 +358,23 @@ export default function PublicForm() {
         type={popup.type}
       />
 
+      {/* Loading Overlay */}
+      {submitting && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 max-w-sm mx-4 text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-black mx-auto mb-4"></div>
+            <h3 className="text-xl font-bold mb-2">Submitting Survey...</h3>
+            <p className="text-gray-600 text-sm">
+              {photos.length > 0 ? 'Uploading photos and submitting data...' : 'Please wait while we submit your data...'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-black text-white px-4 py-4 sticky top-0 z-10 shadow-md">
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-lg font-bold">Traffic & Parking Survey</h1>
+          <h1 className="text-lg font-bold">Illicit on-street parking survey in Douala</h1>
           <p className="text-xs text-gray-300">Douala Districts</p>
         </div>
       </div>

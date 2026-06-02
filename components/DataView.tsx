@@ -141,6 +141,53 @@ export default function DataView({ onBack }: FormManagementProps) {
     window.URL.revokeObjectURL(url)
   }
 
+  const exportGeoJSON = () => {
+    const features = filteredData
+      .filter((item) => item.gps_latitude !== null && item.gps_longitude !== null)
+      .map((item) => ({
+        type: 'Feature' as const,
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [item.gps_longitude!, item.gps_latitude!],
+        },
+        properties: {
+          id: item.id,
+          survey_date: item.survey_date,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          district: item.district,
+          street_intersection: item.street_intersection,
+          surveyor_id: item.surveyor_id,
+          surveyor_name: item.user_agent,
+          number_of_vehicles: item.number_of_vehicles,
+          illegal_parking_instances: item.illegal_parking_instances,
+          pedestrian_obstruction: item.pedestrian_obstruction,
+          average_speed_kmh: item.average_speed_kmh,
+          queue_length_vehicles: item.queue_length_vehicles,
+          delay_time_minutes: item.delay_time_minutes,
+          observed_causes_congestion: item.observed_causes_congestion,
+          photo_captured: item.photo_captured,
+          photo_evidence_urls: item.photo_evidence_urls,
+          additional_observations: item.additional_observations,
+          gps_accuracy: item.gps_accuracy,
+          created_at: item.created_at,
+        },
+      }))
+
+    const geojson = {
+      type: 'FeatureCollection' as const,
+      features,
+    }
+
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `survey_data_${new Date().toISOString().split('T')[0]}.geojson`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  }
+
   const exportPDF = () => {
     alert('PDF Export feature.\n\nIn production, this would use a library like jsPDF or react-pdf to generate a formatted PDF report.')
   }
@@ -245,7 +292,12 @@ export default function DataView({ onBack }: FormManagementProps) {
             >
               CSV
             </button>
-        
+            <button
+              onClick={exportGeoJSON}
+              className="flex-1 md:flex-none px-4 md:px-6 py-2.5 md:py-3 bg-transparent text-primary-black border-2 border-primary-black rounded-sm cursor-pointer text-xs font-semibold transition-all duration-300 uppercase tracking-wide hover:bg-primary-black hover:text-pure-white"
+            >
+              GeoJSON
+            </button>
           </div>
         </div>
 

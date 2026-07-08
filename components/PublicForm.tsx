@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { uploadMultipleToCloudinary } from '@/lib/cloudinary'
 import Popup from './Popup'
@@ -69,6 +69,15 @@ export default function PublicForm() {
     additional_observations: ''
   })
 
+  const [isTracking, setIsTracking] = useState(false)
+  const [currentSpeed, setCurrentSpeed] = useState<number | null>(null)
+  const [capturedSpeed, setCapturedSpeed] = useState<number | null>(null)
+  const [speedUnavailable, setSpeedUnavailable] = useState(false)
+  const speedHistoryRef = useRef<number[]>([])
+  const watchIdRef = useRef<number | null>(null)
+  const lastUpdateRef = useRef<number>(0)
+  const [speedStats, setSpeedStats] = useState({ avg: 0, max: 0, count: 0 })
+
   const fieldLabels: { [key: string]: string } = {
     surveyor_id: 'Surveyor ID',
     surveyor_name: 'Your Name',
@@ -86,6 +95,14 @@ export default function PublicForm() {
   useEffect(() => {
     requestLocation()
     setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+      }
+    }
   }, [])
 
   const requestLocation = () => {
@@ -123,6 +140,106 @@ export default function PublicForm() {
         maximumAge: 0
       }
     )
+  }
+
+  const startSpeedTracking = useCallback(() => {
+    if (!navigator.geolocation) {
+      setSpeedUnavailable(true)
+      return
+    }
+
+    setIsTracking(true)
+    setCapturedSpeed(null)
+    setSpeedUnavailable(false)
+    setCurrentSpeed(null)
+    speedHistoryRef.current = []
+    setSpeedStats({ avg: 0, max: 0, count: 0 })
+    lastUpdateRef.current = 0
+
+    console.log('[SpeedTracker] Starting tracking...')
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const speedMs = position.coords.speed
+        console.log('[SpeedTracker] 📍 GPS update | speed (m/s):', speedMs, '| speed (km/h):', speedMs !== null && speedMs !== undefined ? Math.round(speedMs * 3.6) : 'null', '| accuracy:', position.coords.accuracy)
+        if (speedMs !== null && speedMs !== undefined) {
+          const speedKmh = Math.round(speedMs * 3.6)
+          speedHistoryRef.current.push(speedKmh)
+          console.log('[SpeedTracker] ➕ reading:', speedKmh, 'km/h | history count:', speedHistoryRef.current.length)
+
+          const history = speedHistoryRef.current
+          const avg = Math.round(history.reduce((a, b) => a + b, 0) / history.length)
+          const max = Math.max(...history)
+
+          const now = Date.now()
+          if (now - lastUpdateRef.current >= 500) {
+            setCurrentSpeed(speedKmh)
+            setSpeedStats({ avg, max, count: history.length })
+            lastUpdateRef.current = now
+            console.log('[SpeedTracker] 📊 updated state | avg:', avg, '| max:', max, '| count:', history.length)
+          }
+        } else if (speedHistoryRef.current.length === 0) {
+          console.log('[SpeedTracker] ⚠ coords.speed is null — falling back to manual mode')
+          setSpeedUnavailable(true)
+          stopSpeedTracking()
+        }
+      },
+      (error) => {
+        console.log('[SpeedTracker] ❌ Geolocation error:', error.message)
+        setSpeedUnavailable(true)
+        stopSpeedTracking()
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 1000
+      }
+    )
+
+    watchIdRef.current = watchId
+  }, [])
+
+  const stopSpeedTracking = () => {
+    console.log('[SpeedTracker] 🛑 Stopping tracking | watchId:', watchIdRef.current)
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+    setIsTracking(false)
+  }
+
+  const captureSpeed = () => {
+    const history = speedHistoryRef.current
+    const avg = history.length > 0
+      ? Math.round(history.reduce((a, b) => a + b, 0) / history.length)
+      : 0
+    console.log('[SpeedTracker] 📸 Capturing | readings:', history, '| avg:', avg, 'km/h')
+    setCapturedSpeed(avg)
+    setFormData(prev => ({ ...prev, average_speed_kmh: avg.toString() }))
+    stopSpeedTracking()
+  }
+
+  const resetSpeed = () => {
+    console.log('[SpeedTracker] 🔄 Reset | clearing all speed state')
+    stopSpeedTracking()
+    setCapturedSpeed(null)
+    setCurrentSpeed(null)
+    setSpeedStats({ avg: 0, max: 0, count: 0 })
+    speedHistoryRef.current = []
+    setSpeedUnavailable(false)
+    setFormData(prev => ({ ...prev, average_speed_kmh: '' }))
+    lastUpdateRef.current = 0
+  }
+
+  const getSpeedColor = (speed: number): string => {
+    if (speed <= 10) return 'bg-red-500'
+    if (speed <= 25) return 'bg-amber-500'
+    if (speed <= 40) return 'bg-green-500'
+    return 'bg-blue-500'
+  }
+
+  const getSpeedBarPercent = (speed: number): number => {
+    return Math.min((speed / 60) * 100, 100)
   }
 
   const validateField = (fieldName: keyof FormData, value: string | boolean): string => {
@@ -268,7 +385,7 @@ export default function PublicForm() {
           gps_altitude: parseFloat(formData.gps_altitude),
           gps_accuracy: parseFloat(formData.gps_accuracy),
           number_of_vehicles: parseInt(formData.number_of_vehicles) || 0,
-          average_speed_kmh: parseFloat(formData.average_speed_kmh) || 0,
+          average_speed_kmh: capturedSpeed ?? (parseFloat(formData.average_speed_kmh) || 0),
           queue_length_vehicles: parseInt(formData.queue_length_vehicles) || 0,
           delay_time_minutes: parseInt(formData.delay_time_minutes) || 0,
           illegal_parking_instances: parseInt(formData.illegal_parking_instances) || 0,
@@ -311,6 +428,17 @@ export default function PublicForm() {
       setErrors({})
       setPhotos([])
       setPhotoPreviews([])
+      setCapturedSpeed(null)
+      setCurrentSpeed(null)
+      setIsTracking(false)
+      setSpeedUnavailable(false)
+      speedHistoryRef.current = []
+      setSpeedStats({ avg: 0, max: 0, count: 0 })
+      lastUpdateRef.current = 0
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+        watchIdRef.current = null
+      }
       requestLocation()
 
     } catch (error) {
@@ -596,32 +724,6 @@ export default function PublicForm() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1.5" htmlFor="average_speed_kmh">
-                  Speed (km/h) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="average_speed_kmh"
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  required
-                  value={formData.average_speed_kmh}
-                  onChange={(e) => handleFieldChange('average_speed_kmh', e.target.value)}
-                  onBlur={() => handleFieldBlur('average_speed_kmh')}
-                  placeholder="0"
-                  className={getFieldClassName('average_speed_kmh')}
-                />
-                {errors.average_speed_kmh && (
-                  <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    {errors.average_speed_kmh}
-                  </p>
-                )}
-              </div>
-
-              <div>
                 <label className="block text-sm font-medium mb-1.5" htmlFor="queue_length_vehicles">
                   Queue Length <span className="text-red-500">*</span>
                 </label>
@@ -670,6 +772,139 @@ export default function PublicForm() {
                   </p>
                 )}
               </div>
+            </div>
+
+            <div className="mt-4" id="average_speed_kmh">
+              <label className="block text-sm font-medium mb-2">
+                Speed (km/h) <span className="text-red-500">*</span>
+              </label>
+
+              <div className="border-2 border-gray-200 rounded-xl p-4 bg-gray-50">
+
+                {!isTracking && capturedSpeed === null && !speedUnavailable && (
+                  <>
+                    <div className="text-center mb-3">
+                      <span className="text-5xl font-bold text-gray-300">--</span>
+                      <p className="text-xs text-gray-400 mt-1">km/h</p>
+                    </div>
+                    <div className="w-full h-2 bg-gray-200 rounded-full mb-3" />
+                    <button
+                      type="button"
+                      onClick={startSpeedTracking}
+                      className="w-full py-3 bg-black text-white rounded-lg font-semibold active:scale-[0.98] transition"
+                    >
+                      ▶ Start Tracking
+                    </button>
+                    <p className="text-center mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setSpeedUnavailable(true)}
+                        className="text-xs text-gray-400 underline"
+                      >
+                        or enter manually
+                      </button>
+                    </p>
+                  </>
+                )}
+
+                {isTracking && (
+                  <>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                      <span className="text-xs font-medium text-red-500 uppercase tracking-wide">Live</span>
+                    </div>
+                    <div className="text-center mb-3">
+                      <span className="text-5xl font-bold transition-all">
+                        {currentSpeed ?? 0}
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">km/h</p>
+                    </div>
+                    <div className="w-full h-3 bg-gray-200 rounded-full mb-3 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${getSpeedColor(currentSpeed ?? 0)}`}
+                        style={{ width: `${getSpeedBarPercent(currentSpeed ?? 0)}%` }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={captureSpeed}
+                      className="w-full py-3 bg-black text-white rounded-lg font-semibold active:scale-[0.98] transition"
+                    >
+                      ⏹ Capture Speed
+                    </button>
+                    <div className="flex justify-between mt-2 text-xs text-gray-500">
+                      <span>Avg: {speedStats.avg} km/h</span>
+                      <span>Peak: {speedStats.max} km/h</span>
+                      <span>{speedStats.count} readings</span>
+                    </div>
+                  </>
+                )}
+
+                {capturedSpeed !== null && !isTracking && (
+                  <>
+                    <div className="flex items-center gap-2 mb-2">
+                      <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-xs font-bold text-green-600 uppercase tracking-wide">Captured</span>
+                    </div>
+                    <div className="text-center mb-3">
+                      <span className="text-5xl font-bold">{capturedSpeed}</span>
+                      <p className="text-xs text-gray-500 mt-1">km/h</p>
+                    </div>
+                    <div className="w-full h-3 bg-gray-200 rounded-full mb-3 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${getSpeedColor(capturedSpeed)}`}
+                        style={{ width: `${getSpeedBarPercent(capturedSpeed)}%` }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetSpeed}
+                      className="w-full py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold active:scale-[0.98] transition"
+                    >
+                      ↻ Re-measure
+                    </button>
+                  </>
+                )}
+
+                {speedUnavailable && (
+                  <>
+                    <p className="text-xs text-amber-700 font-medium mb-3 flex items-center gap-1">
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                      Speed tracking not available on this device
+                    </p>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={formData.average_speed_kmh}
+                      onChange={(e) => handleFieldChange('average_speed_kmh', e.target.value)}
+                      onBlur={() => handleFieldBlur('average_speed_kmh')}
+                      placeholder="Enter speed in km/h"
+                      className={getFieldClassName('average_speed_kmh')}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSpeedUnavailable(false)}
+                      className="text-xs text-black underline mt-2"
+                    >
+                      Try tracking again
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {errors.average_speed_kmh && (
+                <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {errors.average_speed_kmh}
+                </p>
+              )}
             </div>
           </div>
 
